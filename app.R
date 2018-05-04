@@ -19,9 +19,12 @@ loadFile <- function(file = NULL,
   df <- fread(input = file,
               colClasses = colClasses)
   
-  df <- df %>%
-    mutate(ArrivalPercDelay = ArrivalPercDelay*100,
-           DeparturePercDelay = DeparturePercDelay*100)
+  if (file == "AverageDelayByFlight.csv"){
+    df <- df %>%
+      mutate(ArrivalPercDelay = ArrivalPercDelay*100,
+             DeparturePercDelay = DeparturePercDelay*100)  
+  }
+  
   
   names(df) <- gsub("\\.","",names(df))
     
@@ -34,6 +37,10 @@ totalByFlight <- loadFile("AverageDelayByFlight.csv",
                           colClasses = c("factor","factor","factor","numeric",
                                         "numeric","integer","numeric","numeric",
                                         "numeric","numeric"))
+
+cancelledFlights <- loadFile("CancelledFlights.csv",
+                             colClasses = c("factor","factor","factor","numeric"))
+
 
 # Function to return the description plus image
 returnDescription <- function(type){
@@ -73,6 +80,7 @@ ui <- fluidPage(
         selectInput(inputId = "airline",
                     label = "Airline",
                     choices = levels(totalByFlight$Airline),
+                    selected = c("TAM"),
                     selectize = F,
                     multiple = T,
                     size = 15
@@ -144,6 +152,9 @@ ui <- fluidPage(
                      ),
                      tabPanel("No of Flights",
                               highchartOutput(outputId = "top_flights")
+                     ),
+                     tabPanel("Flights Cancelled",
+                              highchartOutput(outputId = "cancelled_flights")
                      )
                    )
                  )),
@@ -185,6 +196,7 @@ server <- function(input, output, session) {
       filter(FlightType == input$top_type)
   })
   
+  
   topDelaying <- eventReactive(c(input$top_type,input$numberOfTop),{
     req(input$type)
     req(input$numberOfTop)
@@ -207,11 +219,38 @@ server <- function(input, output, session) {
       head(input$numberOfTop)
   })
   
-  perc <-eventReactive(c(input$type,input$airline),{
+  perc <- eventReactive(c(input$type,input$airline),{
     req(input$type)
     req(input$airline)
     totalByFlight %>%
       filter(FlightType %in% input$type & Airline %in% input$airline)
+  }) 
+  
+  cancelled <- eventReactive(c(input$top_type,input$numberOfTop),{
+    req(input$top_type)
+    req(input$numberOfTop)
+    
+    df1 <- totalByFlight %>%
+      filter(FlightType == input$top_type) %>%
+      group_by(Airline) %>%
+      summarise(TotalFlight = sum(TotalFlight)) %>%
+      ungroup() %>%
+      mutate(Airline = as.character(Airline))
+      
+    
+    df2 <- cancelledFlights %>%
+      filter(FlightType == input$top_type) %>%
+      group_by(Airline) %>%
+      summarise(CancelledFlight = sum(TotalFlight)) %>%
+      ungroup() %>%
+      mutate(Airline = as.character(Airline))
+    
+    t1 <- inner_join(df1,df2,by="Airline") %>%
+      mutate(CancelPercentage = round((CancelledFlight/TotalFlight)*100,3)) %>%
+      mutate(Airline = factor(Airline)) %>%
+      arrange(desc(CancelPercentage))
+    
+    head(t1,input$numberOfTop)
   }) 
   
   
@@ -270,6 +309,44 @@ server <- function(input, output, session) {
     return(chart)
   }
   
+  # Function to generate the treeMap
+  treeMap <- function(df){
+    
+    # Using highchart library
+    chart <- hchart(head(df), 
+                    "treemap", 
+                    layoutAlgorithm = 'sliceAndDice',
+                    animationLimit = input$numberOfTop,
+                    levelIsConstant = F,
+                    allowDrillToNode = T,
+                    hcaes(x = Airline, 
+                          value = CancelPercentage, 
+                          color = TotalFlight)) %>%
+      hc_colorAxis(minColor = "#4144f4",
+                   maxColor = "#f44b42") %>%
+      hc_title(text = paste("Cancelled Flights by Airline"),
+               align = "center") %>%
+      hc_subtitle(text = "Click on the treemap to more information",
+                  align = "center") %>%
+      hc_tooltip(pointFormat = "<b>Number of Flights:</b> {point.TotalFlight} <br>
+                                <b>Cancelled Flights:</b> {point.CancelledFlight} <br>
+                                <b>Cancel Percentage:</b> {point.CancelPercentage}%") %>%
+      hc_credits(enabled = TRUE,
+                 text = "Source: Brazillian National Civil Aviation Agency",
+                 style = list(fontSize = "10px")) %>%
+      hc_legend(enabled = T,
+                verticalAlign = 'top',
+                layout = "vertical",
+                margin = 0,
+                symbolHeight = 220,
+                y = 100,
+                align = 'right',
+                title = list(text = "Cancelled Flights")) %>%
+      hc_add_theme(hc_theme_google())
+    
+    return(chart)
+  }
+  
   output$top_flights <- renderHighchart({
     topBarPlot(df = topFlight(),
                categories = topFlight()$Airline,
@@ -293,11 +370,29 @@ server <- function(input, output, session) {
                        title = "Overview of Flights Delay by Company and Flight")
   })
   
+  output$cancelled_flights <- renderHighchart({
+    treeMap(cancelled())
+  })
+  
+  
   
   # Rendering the datatable
   output$datatable <- renderDataTable({
-    df()
+    perc()[,c("FlightType","Airline","FlightNo","TotalFlight","ArrivalPercDelay","DeparturePercDelay")]
   })
+  
+  # Rendering the option to download the file
+  output$downloadData <- downloadHandler(
+    
+    # Function to return the filename
+    filename = function() {
+      paste("delay-in-brazil-by-airline", ".csv", sep = "")
+    },
+    # Function to return the data
+    content = function(file) {
+      write.csv(perc()[,c("FlightType","Airline","FlightNo","TotalFlight","ArrivalPercDelay","DeparturePercDelay")], file, row.names = FALSE)
+    }
+  )
 }
 
 # Create a Shiny app object
