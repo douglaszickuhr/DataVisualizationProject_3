@@ -19,17 +19,21 @@ loadFile <- function(file = NULL,
   df <- fread(input = file,
               colClasses = colClasses)
   
+  df <- df %>%
+    mutate(ArrivalPercDelay = ArrivalPercDelay*100,
+           DeparturePercDelay = DeparturePercDelay*100)
+  
+  names(df) <- gsub("\\.","",names(df))
+    
+  
   return(df)
   
 }
 
 totalByFlight <- loadFile("AverageDelayByFlight.csv",
                           colClasses = c("factor","factor","factor","numeric",
-                                        "numeric","integer"))
-
-arrivalDelay <- loadFile("PercDelay.csv",
-                         colClasses = c("factor","factor","numeric","numeric",
-                                        "numeric","factor"))
+                                        "numeric","integer","numeric","numeric",
+                                        "numeric","numeric"))
 
 # Function to return the description plus image
 returnDescription <- function(type){
@@ -43,7 +47,7 @@ ui <- fluidPage(
   # Title of panel
   titlePanel(paste("Brazilian Air-traffic Airlines Overview"), 
              windowTitle = "Data Visualization CA2 - Plot 1"),
-  helpText("The purpose on this dashboard is to have an overview of Airlines tha operates in Brazil."),
+  helpText("The purpose on this dashboard is to have an overview of Airlines that operates in Brazil."),
   sidebarLayout(
     
     # The panel has the select input
@@ -52,12 +56,28 @@ ui <- fluidPage(
       
       # Well panel keep things tidy - Flight selection is the first
       wellPanel(# Select Flight Type input
-        selectInput(inputId = "type",
-                    label = "Flight Type",
-                    choices = levels(totalByFlight$Flight.Type),
-                    multiple = F,
-                    selected = "International"
-        )
+        
+        # Select Flight Type input
+        checkboxGroupInput(inputId = "type",
+                           label = "Flight Type",
+                           choices = levels(totalByFlight$FlightType),
+                           selected = levels(totalByFlight$FlightType)
+        ),
+        
+        hr(),
+        
+        # Help for the select input
+        helpText("Select one or more Airlines below (using ctrl (command on Mac) or shift + click). Selecting too many airlines may affect the performance of the plot"),
+        
+        # Select Airline input
+        selectInput(inputId = "airline",
+                    label = "Airline",
+                    choices = levels(totalByFlight$Airline),
+                    selectize = F,
+                    multiple = T,
+                    size = 15
+                    )
+        
       ),
       wellPanel(
         h5(tags$a(img(src = "https://www.ncirl.ie/Portals/0/nciLogo.png", 
@@ -91,13 +111,31 @@ ui <- fluidPage(
       tabsetPanel(
         
         #First tab for Map
+        tabPanel("Percentage of Delay",
+          wellPanel(
+            tabPanel("Percentage of Delay",
+                     highchartOutput(outputId = "perc_delay_by_flight")
+            )
+          )
+        ),
         tabPanel("Top Airlines",
-                 numericInput(inputId = "numberOfTop",
-                              label = "Number of Airlines",
-                              value = 10,
-                              min = 5,
-                              max = 20,
-                              step = 1),
+                 
+                 # Well panel keep things tidy - Flight selection is the first
+                 wellPanel(
+                   div(style="display: inline-block;vertical-align:top; width: 150px;",
+                       selectInput(inputId = "top_type",
+                                   label = "Flight Type",
+                                   choices = levels(totalByFlight$FlightType),
+                                   multiple = F,
+                                   selected = "International"
+                       )),
+                   div(style="display: inline-block;vertical-align:top; width: 150px;",
+                       numericInput(inputId = "numberOfTop",
+                                    label = "Number of Airlines",
+                                    value = 10,
+                                    min = 5,
+                                    max = 20,
+                                    step = 1))),
                  # Well panel to organise the output
                  wellPanel(
                    tabsetPanel(
@@ -106,16 +144,6 @@ ui <- fluidPage(
                      ),
                      tabPanel("No of Flights",
                               highchartOutput(outputId = "top_flights")
-                     ),
-                     tabPanel("Percentage of Delay",
-                              tabsetPanel(
-                                tabPanel(returnDescription(type = "Departures"),
-                                         highchartOutput(outputId = "perc_delay_departure")
-                                ),
-                                tabPanel(returnDescription(type = "Arrivals"),
-                                         highchartOutput(outputId = "perc_delay_arrival")
-                                )
-                              )
                      )
                    )
                  )),
@@ -152,32 +180,39 @@ ui <- fluidPage(
 # Server - Shinny
 server <- function(input, output, session) {
   
-  df <- eventReactive(input$type,{
+  df <- eventReactive(input$top_type,{
     totalByFlight %>%
-      filter(Flight.Type == input$type)
+      filter(FlightType == input$top_type)
   })
   
-  topDelaying <- eventReactive(c(input$type,input$numberOfTop),{
+  topDelaying <- eventReactive(c(input$top_type,input$numberOfTop),{
     req(input$type)
     req(input$numberOfTop)
     df() %>%
-      group_by(Flight.Type,Airline) %>%
+      group_by(FlightType,Airline) %>%
       summarise(AverageDelay = round(mean(AverageDepartureDelay + AverageArrivalDelay),2),
                 TotalFlight = sum(TotalFlight)) %>%
       arrange(desc(AverageDelay)) %>%
       head(input$numberOfTop)
   })
   
-  topFlight <- eventReactive(c(input$type,input$numberOfTop),{
+  topFlight <- eventReactive(c(input$top_type,input$numberOfTop),{
     req(input$type)
     req(input$numberOfTop)
     df() %>%
-      group_by(Flight.Type,Airline) %>%
+      group_by(FlightType,Airline) %>%
       summarise(AverageDelay = round(mean(AverageDepartureDelay + AverageArrivalDelay),2),
                 TotalFlight = sum(TotalFlight)) %>%
       arrange(desc(TotalFlight)) %>%
       head(input$numberOfTop)
   })
+  
+  perc <-eventReactive(c(input$type,input$airline),{
+    req(input$type)
+    req(input$airline)
+    totalByFlight %>%
+      filter(FlightType %in% input$type & Airline %in% input$airline)
+  }) 
   
   
   topBarPlot <- function(df,
@@ -205,22 +240,27 @@ server <- function(input, output, session) {
     return(chart)
   }
   
-  Plot <- function(df,
-                         categories,
-                         series,
-                         title,
-                         yAxis){
+  delayByCompanyPlot <- function(df,
+                                 title){
     
-    chart <- highchart() %>%
-      hc_chart(type = "bar") %>%
-      hc_xAxis(title = list(text = "Airlines"),
-               categories = categories) %>%
-      hc_add_series(series,
-                    showInLegend = F) %>%
-      hc_yAxis(title = list(text = yAxis)) %>%
+    chart <- hchart(df,type="scatter",hcaes(x=DeparturePercDelay,
+                                              y=ArrivalPercDelay,
+                                              group=FlightType,
+                                              size=TotalFlight)) %>%
+      hc_xAxis(title = list(text = "Percentage of Delayed Arrival  (Over 15 minutes)"),
+               max = 100,
+               min = 0) %>%
+      hc_yAxis(title = list(text = "Percentage of Delayed Departure (Over 15 minutes)"),
+               max = 100,
+               min = 0) %>%
+      hc_tooltip(pointFormat = "<b>Airline:</b> {point.Airline} <br>
+                                <b>Number of Flights:</b> {point.TotalFlight} <br>
+                                <b>Flight No.:</b> {point.FlightNo} <br>
+                                <b>Percentage of Delayed Departure:</b> {point.DeparturePercDelay}% <br>
+                                <b>Percentage of Delayed Arrival:</b> {point.ArrivalPercDelay}%") %>%
       hc_title(text = title,
                align = "center") %>%
-      hc_subtitle(text = "Click on the bar to more information",
+      hc_subtitle(text = "Percentage of Delaying Departure and Arrival (Over 15 minutes)",
                   align = "center") %>%
       hc_credits(enabled = TRUE,
                  text = "Source: Brazillian National Civil Aviation Agency",
@@ -239,13 +279,18 @@ server <- function(input, output, session) {
   })
   
   output$top_delaying <- renderHighchart({
-    print(topDelaying())
     topBarPlot(df = topDelaying(),
                categories = topDelaying()$Airline,
                series = topDelaying()$AverageDelay,
                title = "Top Airlines in Delaying",
                yAxis = "Average Delay time in minutes")
     
+  })
+  
+  output$perc_delay_by_flight <- renderHighchart({
+    req(input$airline)
+    delayByCompanyPlot(df = perc(),
+                       title = "Overview of Flights Delay by Company and Flight")
   })
   
   
