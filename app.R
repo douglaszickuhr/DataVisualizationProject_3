@@ -11,14 +11,39 @@ library(dplyr)
 library(shiny)
 library(DT)
 library(data.table)
+library(highcharter)
+
+loadFile <- function(file = NULL,
+                     colClasses = NULL){
+  
+  df <- fread(input = file,
+              colClasses = colClasses)
+  
+  return(df)
+  
+}
+
+totalByFlight <- loadFile("AverageDelayByFlight.csv",
+                          colClasses = c("factor","factor","factor","numeric",
+                                        "numeric","integer"))
+
+arrivalDelay <- loadFile("PercDelay.csv",
+                         colClasses = c("factor","factor","numeric","numeric",
+                                        "numeric","factor"))
+
+# Function to return the description plus image
+returnDescription <- function(type){
+  HTML(paste(img(src=paste0('http://www.tijoletarustica.com.br/img/',type,'.png'),
+                 height = "15px"),type))
+}
 
 # Shiny User interface
 ui <- fluidPage(
   
   # Title of panel
-  titlePanel(paste("Brazilian Flight Overview."), 
+  titlePanel(paste("Brazilian Air-traffic Airlines Overview"), 
              windowTitle = "Data Visualization CA2 - Plot 1"),
-  helpText("The purpose on this dashboard is to have an overview of flights in Brazil."),
+  helpText("The purpose on this dashboard is to have an overview of Airlines tha operates in Brazil."),
   sidebarLayout(
     
     # The panel has the select input
@@ -26,13 +51,14 @@ ui <- fluidPage(
       width = 3,
       
       # Well panel keep things tidy - Flight selection is the first
-      # wellPanel(# Select Flight Type input
-      #           checkboxGroupInput(inputId = "type",
-      #                              label = "Flight Type",
-      #                              choices = levels(totalByDay$Flight.Type),
-      #                              selected = levels(totalByDay$Flight.Type)
-      #           )
-      # ),
+      wellPanel(# Select Flight Type input
+        selectInput(inputId = "type",
+                    label = "Flight Type",
+                    choices = levels(totalByFlight$Flight.Type),
+                    multiple = F,
+                    selected = "International"
+        )
+      ),
       wellPanel(
         h5(tags$a(img(src = "https://www.ncirl.ie/Portals/0/nciLogo.png", 
                       height = "30px"),
@@ -65,12 +91,34 @@ ui <- fluidPage(
       tabsetPanel(
         
         #First tab for Map
-        tabPanel("Map",
-                 
+        tabPanel("Top Airlines",
+                 numericInput(inputId = "numberOfTop",
+                              label = "Number of Airlines",
+                              value = 10,
+                              min = 5,
+                              max = 20,
+                              step = 1),
                  # Well panel to organise the output
                  wellPanel(
-                   
-                   )),
+                   tabsetPanel(
+                     tabPanel("Delaying",
+                              highchartOutput(outputId = "top_delaying")
+                     ),
+                     tabPanel("No of Flights",
+                              highchartOutput(outputId = "top_flights")
+                     ),
+                     tabPanel("Percentage of Delay",
+                              tabsetPanel(
+                                tabPanel(returnDescription(type = "Departures"),
+                                         highchartOutput(outputId = "perc_delay_departure")
+                                ),
+                                tabPanel(returnDescription(type = "Arrivals"),
+                                         highchartOutput(outputId = "perc_delay_arrival")
+                                )
+                              )
+                     )
+                   )
+                 )),
         # Third tab - Showing the data and allowing the user to download it
         tabPanel("Data",
                  
@@ -96,9 +144,6 @@ ui <- fluidPage(
         )
       ),
       
-      # Listing the total of records found.
-      uiOutput(outputId = "n"),
-      
       helpText("The raw dataset contains over 2M flight observations from 31/Dec/2014 to 31/Jul/2017")
     )
   )
@@ -107,48 +152,107 @@ ui <- fluidPage(
 # Server - Shinny
 server <- function(input, output, session) {
   
+  df <- eventReactive(input$type,{
+    totalByFlight %>%
+      filter(Flight.Type == input$type)
+  })
+  
+  topDelaying <- eventReactive(c(input$type,input$numberOfTop),{
+    req(input$type)
+    req(input$numberOfTop)
+    df() %>%
+      group_by(Flight.Type,Airline) %>%
+      summarise(AverageDelay = round(mean(AverageDepartureDelay + AverageArrivalDelay),2),
+                TotalFlight = sum(TotalFlight)) %>%
+      arrange(desc(AverageDelay)) %>%
+      head(input$numberOfTop)
+  })
+  
+  topFlight <- eventReactive(c(input$type,input$numberOfTop),{
+    req(input$type)
+    req(input$numberOfTop)
+    df() %>%
+      group_by(Flight.Type,Airline) %>%
+      summarise(AverageDelay = round(mean(AverageDepartureDelay + AverageArrivalDelay),2),
+                TotalFlight = sum(TotalFlight)) %>%
+      arrange(desc(TotalFlight)) %>%
+      head(input$numberOfTop)
+  })
   
   
-  # # Rendering the information about the filtered data
-  # output$n <- renderUI({
-  #   
-  #   # Requesting the type
-  #   req(input$type)
-  #   
-  #   # Creating a new dataframe to list the data
-  #   types <- oneDay()
-  #   
-  #   # Aggregating the data to generate the total by type
-  #   types <- types %>%
-  #     filter(Flight.Type %in% input$type) %>%
-  #     group_by(Flight.Type) %>%
-  #     summarise(Total = sum(Total))
-  #   
-  #   # Generating a matrix with the same length of the dataframe
-  #   n <- matrix("",length(types$Flight.Type))
-  #   
-  #   # Iterating the dataframe and populating the matrix to output
-  #   for (i in 1:length(types$Flight.Type)){
-  #     desc <- levels(types$Flight.Type)[as.numeric(types[i,1])]
-  #     n[i] <- paste(types[i,2],desc, "flights were found at this date.<br>")
-  #   }
-  #   
-  #   # Returning the matrix as HTML
-  #   return(HTML(n))
-  # })
-  # 
-  # # Rendering the option to download the file
-  # output$downloadData <- downloadHandler(
-  #   
-  #   # Function to return the filename
-  #   filename = function() {
-  #     paste("flights",format.Date(input$date,"%Y-%m-%d") , ".csv", sep = "")
-  #   },
-  #   # Function to return the data
-  #   content = function(file) {
-  #     write.csv(oneDay()[,c("Route","Total")], file, row.names = FALSE)
-  #   }
-  # )
+  topBarPlot <- function(df,
+                         categories,
+                         series,
+                         title,
+                         yAxis){
+    
+    chart <- highchart() %>%
+      hc_chart(type = "bar") %>%
+      hc_xAxis(title = list(text = "Airlines"),
+               categories = categories) %>%
+      hc_add_series(series,
+                    showInLegend = F) %>%
+      hc_yAxis(title = list(text = yAxis)) %>%
+      hc_title(text = title,
+               align = "center") %>%
+      hc_subtitle(text = "Click on the bar to more information",
+                  align = "center") %>%
+      hc_credits(enabled = TRUE,
+                 text = "Source: Brazillian National Civil Aviation Agency",
+                 style = list(fontSize = "10px")) %>%
+      hc_add_theme(hc_theme_google())
+    
+    return(chart)
+  }
+  
+  Plot <- function(df,
+                         categories,
+                         series,
+                         title,
+                         yAxis){
+    
+    chart <- highchart() %>%
+      hc_chart(type = "bar") %>%
+      hc_xAxis(title = list(text = "Airlines"),
+               categories = categories) %>%
+      hc_add_series(series,
+                    showInLegend = F) %>%
+      hc_yAxis(title = list(text = yAxis)) %>%
+      hc_title(text = title,
+               align = "center") %>%
+      hc_subtitle(text = "Click on the bar to more information",
+                  align = "center") %>%
+      hc_credits(enabled = TRUE,
+                 text = "Source: Brazillian National Civil Aviation Agency",
+                 style = list(fontSize = "10px")) %>%
+      hc_add_theme(hc_theme_google())
+    
+    return(chart)
+  }
+  
+  output$top_flights <- renderHighchart({
+    topBarPlot(df = topFlight(),
+               categories = topFlight()$Airline,
+               series = topFlight()$TotalFlight,
+               title = "Top Airlines in Number of Flights",
+               yAxis = "Number of Flights")
+  })
+  
+  output$top_delaying <- renderHighchart({
+    print(topDelaying())
+    topBarPlot(df = topDelaying(),
+               categories = topDelaying()$Airline,
+               series = topDelaying()$AverageDelay,
+               title = "Top Airlines in Delaying",
+               yAxis = "Average Delay time in minutes")
+    
+  })
+  
+  
+  # Rendering the datatable
+  output$datatable <- renderDataTable({
+    df()
+  })
 }
 
 # Create a Shiny app object
