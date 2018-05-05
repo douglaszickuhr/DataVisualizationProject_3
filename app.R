@@ -53,8 +53,8 @@ ui <- fluidPage(
   
   # Title of panel
   titlePanel(paste("Brazilian Air-traffic Airlines Overview"), 
-             windowTitle = "Data Visualization CA2 - Plot 1"),
-  helpText("The purpose on this dashboard is to have an overview of Airlines that operates in Brazil."),
+             windowTitle = "Data Visualization Final Project - Dashboard 3"),
+  helpText("The purpose of this dashboard is to have an overview of Airlines that operates in Brazil."),
   sidebarLayout(
     
     # The panel has the select input
@@ -62,7 +62,7 @@ ui <- fluidPage(
       width = 3,
       
       # Well panel keep things tidy - Flight selection is the first
-      wellPanel(# Select Flight Type input
+      wellPanel(h3("Flight Selection"),
         
         # Select Flight Type input
         checkboxGroupInput(inputId = "type",
@@ -74,7 +74,7 @@ ui <- fluidPage(
         hr(),
         
         # Help for the select input
-        helpText("Select one or more Airlines below (using ctrl (command on Mac) or shift + click). Selecting too many airlines may affect the performance of the plot"),
+        helpText("Select one or more Airlines below (using Ctrl or Shift + selection). Selecting too many airlines may affect the performance of the plot"),
         
         # Select Airline input
         selectInput(inputId = "airline",
@@ -122,12 +122,12 @@ ui <- fluidPage(
         tabPanel("Percentage of Delay",
           wellPanel(
             tabPanel("Percentage of Delay",
+                     helpText("This chart is affected by the filters on the left panel."),
                      highchartOutput(outputId = "perc_delay_by_flight")
             )
           )
         ),
         tabPanel("Top Airlines",
-                 
                  # Well panel keep things tidy - Flight selection is the first
                  wellPanel(
                    div(style="display: inline-block;vertical-align:top; width: 150px;",
@@ -143,7 +143,10 @@ ui <- fluidPage(
                                     value = 10,
                                     min = 5,
                                     max = 20,
-                                    step = 1))),
+                                    step = 1)),
+                   helpText("Change the Flight Type and Number of Airlines to modify the diagrams below.")
+                   ),
+                 
                  # Well panel to organise the output
                  wellPanel(
                    tabsetPanel(
@@ -154,6 +157,8 @@ ui <- fluidPage(
                               highchartOutput(outputId = "top_flights")
                      ),
                      tabPanel("Flights Cancelled",
+                              helpText("The size of each tile represents the percentage of cancelled Flights"),
+                              helpText("The color represents the number of flights that the Airline operate"),
                               highchartOutput(outputId = "cancelled_flights")
                      )
                    )
@@ -341,7 +346,7 @@ server <- function(input, output, session) {
                 symbolHeight = 220,
                 y = 100,
                 align = 'right',
-                title = list(text = "Cancelled Flights")) %>%
+                title = list(text = "Number of Flights")) %>%
       hc_add_theme(hc_theme_google())
     
     return(chart)
