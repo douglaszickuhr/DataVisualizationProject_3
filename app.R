@@ -151,7 +151,12 @@ ui <- fluidPage(
                  wellPanel(
                    tabsetPanel(
                      tabPanel("Delaying",
-                              highchartOutput(outputId = "top_delaying")
+                              div(style="display: inline-block;vertical-align:top; width: 430px;",
+                                  highchartOutput(outputId = "top_delaying")
+                                  ),
+                              div(style="display: inline-block;vertical-align:top; width: 430px;",
+                                  highchartOutput(outputId = "less_delaying")
+                              )
                      ),
                      tabPanel("No of Flights",
                               highchartOutput(outputId = "top_flights")
@@ -213,6 +218,18 @@ server <- function(input, output, session) {
       head(input$numberOfTop)
   })
   
+  lessDelaying <- eventReactive(c(input$top_type,input$numberOfTop),{
+    req(input$type)
+    req(input$numberOfTop)
+    df() %>%
+      group_by(FlightType,Airline) %>%
+      summarise(AverageDelay = round(mean(AverageDepartureDelay + AverageArrivalDelay),2),
+                TotalFlight = sum(TotalFlight)) %>%
+      filter(AverageDelay >= 0) %>%
+      arrange(AverageDelay) %>%
+      head(input$numberOfTop)
+  })
+  
   topFlight <- eventReactive(c(input$top_type,input$numberOfTop),{
     req(input$type)
     req(input$numberOfTop)
@@ -263,23 +280,34 @@ server <- function(input, output, session) {
                          categories,
                          series,
                          title,
-                         yAxis){
+                         yAxis,
+                         color,
+                         reversed = F){
     
     chart <- highchart() %>%
       hc_chart(type = "bar") %>%
       hc_xAxis(title = list(text = "Airlines"),
-               categories = categories) %>%
+               categories = categories,
+               opposite = reversed) %>%
       hc_add_series(series,
                     showInLegend = F) %>%
-      hc_yAxis(title = list(text = yAxis)) %>%
+      hc_yAxis(title = list(text = yAxis),
+               reversed = reversed) %>%
       hc_title(text = title,
                align = "center") %>%
       hc_subtitle(text = "Click on the bar to more information",
                   align = "center") %>%
       hc_credits(enabled = TRUE,
                  text = "Source: Brazillian National Civil Aviation Agency",
-                 style = list(fontSize = "10px")) %>%
-      hc_add_theme(hc_theme_google())
+                 style = list(fontSize = "10px")) 
+    
+     if (!missing(color)){
+       chart <- chart %>%
+         hc_plotOptions(series = list(color=color))
+     } else {
+       chart <- chart %>%
+         hc_add_theme(hc_theme_google())
+     }
     
     return(chart)
   }
@@ -364,8 +392,20 @@ server <- function(input, output, session) {
     topBarPlot(df = topDelaying(),
                categories = topDelaying()$Airline,
                series = topDelaying()$AverageDelay,
-               title = "Top Airlines in Delaying",
-               yAxis = "Average Delay time in minutes")
+               title = "Airlines with highest average delay",
+               yAxis = "Average Delay time in minutes",
+               color = "#ff0000")
+    
+  })
+  
+  output$less_delaying <- renderHighchart({
+    topBarPlot(df = lessDelaying(),
+               categories = lessDelaying()$Airline,
+               series = lessDelaying()$AverageDelay,
+               title = "Airlines with lowest average delay",
+               yAxis = "Average Delay time in minutes",
+               color = "#008000",
+               reversed = T)
     
   })
   
